@@ -25,18 +25,122 @@ A local-first, AI-agent-driven automation platform that runs entirely on the use
 
 Fresh Node.js/TypeScript pnpm monorepo (approach chosen over forking n8n — no inherited complexity, no Sustainable Use license constraints — and over a Python split-stack). One command to start (`pnpm dev`), UI served at `localhost:4680`.
 
+One Node.js process runs server + engine + scheduler. Playwright drives a local headless (or headful, watchable) Chrome. Everything persists in SQLite under `data/`.
+
+### 2.1 System overview & data flow
+
 ```
-autonimbus/
-├── packages/
-│   ├── engine/     # workflow executor, node runtime, scheduler
-│   ├── nodes/      # built-in node library + user/agent-created nodes
-│   ├── agent/      # Nimbus: Claude Agent SDK + Ollama routing
-│   ├── server/     # Fastify API + WebSocket (live run updates), SQLite
-│   └── web/        # React + React Flow canvas, wizard UI, chat panel
-└── data/           # SQLite db, encrypted credentials, run logs
+┌─────────────────────────── Browser (localhost:4680) ───────────────────────────┐
+│  web: canvas (React Flow) · inspector · palette · wizard · Nimbus chat · runs  │
+└──────────────┬────────────────────────────────────────────┬────────────────────┘
+               │ REST (CRUD, run commands)                  │ WebSocket (live run
+               ▼                                            ▼  status, chat stream)
+┌──────────────────────────── Node.js process ───────────────────────────────────┐
+│  server (Fastify)  ── owns ──  db (SQLite) · vault (encrypted credentials)     │
+│      │                                                                          │
+│      ├── engine: executor (walks graph) · runtime (loads nodes, timeouts,      │
+│      │           sandboxing) · scheduler (cron → enqueue runs)                  │
+│      │       └── nodes: triggers / actions / rules  ──► Playwright Chrome,     │
+│      │                                                  fs, shell, HTTP, AI    │
+│      └── agent (Nimbus): Claude Agent SDK session + tools that call the same   │
+│                          server services (buildWorkflow, createNodeType,       │
+│                          writeSetupGuide, fixRun) · model router (Claude/Ollama)│
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-One Node.js process runs server + engine + scheduler. Playwright drives a local headless (or headful, watchable) Chrome. Everything persists in SQLite under `data/`.
+Dependency direction is strict and one-way: `web → server → engine → nodes`, with `shared` (types, errors, logger) imported by everyone and nothing importing `web`. The agent is a peer of the engine and mutates workflows only through the same services the REST API uses — so anything Nimbus builds is reproducible by hand, and anything debuggable by hand is debuggable when Nimbus did it.
+
+### 2.2 Folder structure (debug-friendly by design)
+
+Every package has the same internal shape (`src/` by feature, colocated `__tests__/`), so you always know where to look. Runtime state is isolated in `data/` (gitignored), never mixed with code.
+
+```
+autonimbus/
+├── pnpm-workspace.yaml · package.json · tsconfig.base.json · .env.example
+├── docs/
+│   └── superpowers/specs/            # design specs & plans
+├── data/                             # runtime state — gitignored
+│   ├── autonimbus.db                 # SQLite database
+│   ├── logs/                         # daily-rotated structured logs (JSON lines)
+│   └── artifacts/<runId>/            # per-run screenshots, downloads, HTML dumps
+├── packages/
+│   ├── shared/                       # imported by all packages, imports nothing
+│   │   └── src/
+│   │       ├── types/                # WorkflowGraph, NodeManifest, RunStatus, events
+│   │       ├── errors/               # AppError hierarchy (code + friendly message + fix)
+│   │       └── logger/               # pino wrapper; child loggers scoped by runId/nodeId
+│   ├── engine/
+│   │   └── src/
+│   │       ├── executor/             # graph walker, branch/rule evaluation, step runner
+│   │       ├── runtime/              # node loading + hot-reload, per-step timeout, sandbox
+│   │       ├── scheduler/            # plain-English → cron, next-run computation
+│   │       └── __tests__/
+│   ├── nodes/
+│   │   └── src/
+│   │       ├── triggers/             # schedule, webhook, file-watch, page-change, manual
+│   │       ├── actions/
+│   │       │   ├── browser/          # Playwright family (open, extract, fill, click, shot)
+│   │       │   ├── http/             # API call node + curl import
+│   │       │   ├── files/            # read/write/move/watch
+│   │       │   ├── shell/            # run command (permission-gated)
+│   │       │   ├── notify/           # macOS notification, email, Telegram
+│   │       │   └── ai/               # summarize/classify/extract (model-routed)
+│   │       ├── rules/                # if / filter / repeat
+│   │       ├── community/            # agent- and user-created nodes (hot-loaded)
+│   │       └── __tests__/            # contract tests + fixture pages for browser nodes
+│   ├── agent/
+│   │   └── src/
+│   │       ├── nimbus/               # Claude Agent SDK session lifecycle, subscription auth
+│   │       ├── tools/                # buildWorkflow, createNodeType, writeSetupGuide, fixRun
+│   │       ├── routing/              # Auto router: Ollama if simple + installed, else Claude
+│   │       └── __tests__/
+│   ├── server/
+│   │   └── src/
+│   │       ├── api/routes/           # workflows, runs, credentials, node-types, agent, guides
+│   │       ├── ws/                   # run-status + chat streaming channels
+│   │       ├── services/             # business logic shared by REST routes and agent tools
+│   │       ├── db/                   # Drizzle ORM schema + versioned migrations/
+│   │       ├── vault/                # AES-256-GCM credential encryption (key in macOS Keychain)
+│   │       └── __tests__/
+│   └── web/
+│       └── src/
+│           ├── app/                  # shell, routing, providers
+│           ├── canvas/               # React Flow custom nodes/edges/toolbar/minimap
+│           ├── inspector/            # right-panel node settings
+│           ├── palette/              # node library sidebar
+│           ├── chat/                 # Nimbus panel + inline space-bar summon
+│           ├── wizard/               # guided API setup flow
+│           ├── runs/                 # run history, step data viewer, replay
+│           ├── stores/               # Zustand state (one store per feature)
+│           └── styles/               # design tokens, Figma-grade theme
+└── e2e/                              # Playwright end-to-end: build → run → fix smoke test
+```
+
+### 2.3 Database schema (SQLite, Drizzle ORM, versioned migrations)
+
+| Table | Purpose | Key columns |
+|---|---|---|
+| `workflows` | One row per automation | `id`, `name`, `description`, `graph` (JSON: nodes + edges + positions), `status` (draft/active/paused), `created_at`, `updated_at` |
+| `runs` | One row per execution | `id`, `workflow_id`, `trigger_kind`, `status` (running/success/failed/cancelled), `started_at`, `finished_at`, `error_summary` |
+| `run_steps` | One row per node execution — the debugging backbone | `id`, `run_id`, `node_id`, `node_type`, `status`, `input_snapshot` (JSON), `output_snapshot` (JSON), `error` (JSON: code, friendly_message, suggested_fix, stack), `model_used`, `duration_ms` |
+| `node_types` | Registry of every node, built-in or generated | `id` (slug), `kind` (trigger/action/rule), `source` (builtin/agent/user), `manifest` (JSON), `file_path`, `version`, `enabled` |
+| `credentials` | Encrypted service keys | `id`, `service`, `label`, `encrypted_payload`, `created_at`, `last_verified_at` |
+| `setup_guides` | Wizard content | `service`, `steps` (JSON), `source` (builtin/generated), `generated_at` |
+| `schedules` | Cron state per workflow | `id`, `workflow_id`, `cron_expr`, `plain_text`, `next_run_at`, `enabled` |
+| `webhooks` | Incoming webhook endpoints | `id`, `workflow_id`, `path_token`, `secret` |
+| `permissions` | Remembered grants | `id`, `workflow_id`, `scope` (e.g. `fs:/Users/x/Downloads`, `shell`, `browser`), `granted_at` |
+| `chat_messages` | Nimbus conversation history | `id`, `workflow_id` (nullable), `role`, `content`, `created_at` |
+| `settings` | App config | `key`, `value` |
+
+Snapshots in `run_steps` are what powers both the replay-while-editing feature and "Let Nimbus fix it" (the agent reads the exact input that broke the node). Large payloads (screenshots, files) go to `data/artifacts/<runId>/` with only the path stored in the row.
+
+### 2.4 Debuggability conventions
+
+- **Correlation IDs end to end.** Every run gets a `runId`; every log line, WebSocket event, DB row, and artifact folder carries it (plus `nodeId` at step level). One grep — or one query on `run_steps` — reconstructs any failure.
+- **Structured logs.** Pino JSON lines to `data/logs/`, daily-rotated, with child loggers per package (`engine`, `nodes.browser`, `agent`, …) so noise is filterable by source.
+- **Errors normalized at boundaries.** Every package throws `AppError { code, friendlyMessage, suggestedFix, cause }`; raw errors are wrapped, never swallowed. The UI's plain-English error (section 9) is the same object the logs and Nimbus see — one source of truth.
+- **Failure artifacts.** Browser nodes auto-capture a screenshot + HTML dump into the run's artifact folder on failure, so "why did the selector miss" is answerable after the fact.
+- **Strict boundaries, easy bisection.** One-way dependencies and per-package tests mean a bug is localizable by layer: wrong data shape → `nodes`, wrong sequencing → `engine`, wrong persistence → `server`, wrong display → `web`.
 
 ## 3. Node model
 
