@@ -25,7 +25,7 @@ A local-first, AI-agent-driven automation platform that runs entirely on the use
 
 Fresh Node.js/TypeScript pnpm monorepo (approach chosen over forking n8n — no inherited complexity, no Sustainable Use license constraints — and over a Python split-stack). One command to start (`pnpm dev`), UI served at `localhost:4680`.
 
-One Node.js process runs server + engine + scheduler. Playwright drives a local headless (or headful, watchable) Chrome. Everything persists in SQLite under `data/`.
+One Node.js process runs server + engine + scheduler. Playwright drives a local headless (or headful, watchable) Chrome. Everything persists in a local **PostgreSQL** database (connection string in `.env`; a `docker compose up db` file ships with the repo for one-command setup, or point it at an existing local Postgres). Logs and run artifacts live on disk under `data/`.
 
 ### 2.1 System overview & data flow
 
@@ -36,7 +36,7 @@ One Node.js process runs server + engine + scheduler. Playwright drives a local 
                │ REST (CRUD, run commands)                  │ WebSocket (live run
                ▼                                            ▼  status, chat stream)
 ┌──────────────────────────── Node.js process ───────────────────────────────────┐
-│  server (Fastify)  ── owns ──  db (SQLite) · vault (encrypted credentials)     │
+│  server (Fastify)  ── owns ──  db (PostgreSQL) · vault (encrypted credentials) │
 │      │                                                                          │
 │      ├── engine: executor (walks graph) · runtime (loads nodes, timeouts,      │
 │      │           sandboxing) · scheduler (cron → enqueue runs)                  │
@@ -59,8 +59,8 @@ autonimbus/
 ├── pnpm-workspace.yaml · package.json · tsconfig.base.json · .env.example
 ├── docs/
 │   └── superpowers/specs/            # design specs & plans
+├── docker-compose.yml                # local PostgreSQL (one command: docker compose up db)
 ├── data/                             # runtime state — gitignored
-│   ├── autonimbus.db                 # SQLite database
 │   ├── logs/                         # daily-rotated structured logs (JSON lines)
 │   └── artifacts/<runId>/            # per-run screenshots, downloads, HTML dumps
 ├── packages/
@@ -116,7 +116,7 @@ autonimbus/
 └── e2e/                              # Playwright end-to-end: build → run → fix smoke test
 ```
 
-### 2.3 Database schema (SQLite, Drizzle ORM, versioned migrations)
+### 2.3 Database schema (PostgreSQL, Drizzle ORM, versioned migrations)
 
 | Table | Purpose | Key columns |
 |---|---|---|
@@ -190,7 +190,7 @@ The HTTP/API node also imports curl commands directly (kept from n8n).
 
 ## 8. Execution engine & storage
 
-Sequential-with-branches executor: runs node by node, streams status to the canvas live over WebSocket, stores every run's input/output snapshots in SQLite so any past run's data can be replayed while editing. Single-user, no queue mode. Each node run is time-limited; errors are contained per node.
+Sequential-with-branches executor: runs node by node, streams status to the canvas live over WebSocket, stores every run's input/output snapshots in PostgreSQL (`jsonb`) so any past run's data can be replayed while editing. Single-user, no queue mode. Each node run is time-limited; errors are contained per node.
 
 ## 9. Error handling
 
