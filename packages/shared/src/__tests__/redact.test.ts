@@ -27,6 +27,15 @@ describe("redactSecrets", () => {
     expect(out.name).toBe("keep me");
   });
 
+  it("masks array items under secret-named keys", () => {
+    const out = redactSecrets({ api_keys: ["shortval", "another"], tags: ["keep"] }) as {
+      api_keys: string[];
+      tags: string[];
+    };
+    expect(out.api_keys).toEqual(["•••redacted•••", "•••redacted•••"]);
+    expect(out.tags).toEqual(["keep"]);
+  });
+
   it("leaves non-secret data untouched", () => {
     const data = { price: 450, airline: "Cebu Pacific" };
     expect(redactSecrets(data)).toEqual(data);

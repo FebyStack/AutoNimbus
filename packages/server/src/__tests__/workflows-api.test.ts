@@ -63,6 +63,40 @@ describe.skipIf(!url)("workflows API", () => {
     expect(res.json().friendlyMessage).toBeTruthy();
   });
 
+  it("rejects a missing or blank name with a friendly error", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/workflows",
+      payload: { graph },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe("INVALID_WORKFLOW");
+
+    const blank = await app.inject({
+      method: "POST",
+      url: "/api/workflows",
+      payload: { name: "   ", graph },
+    });
+    expect(blank.statusCode).toBe(400);
+  });
+
+  it("rejects an unknown status with a friendly error", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/workflows",
+      payload: { name: "Status check", graph },
+    });
+    const { id } = created.json();
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/workflows/${id}`,
+      payload: { status: "banana" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe("INVALID_WORKFLOW");
+    await app.inject({ method: "DELETE", url: `/api/workflows/${id}` });
+  });
+
   it("404s with a friendly error for a missing workflow", async () => {
     const res = await app.inject({
       method: "GET",

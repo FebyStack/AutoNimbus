@@ -3,14 +3,17 @@ import { AppError, workflowGraphSchema, type WorkflowGraph } from "@autonimbus/s
 import type { Db } from "../db/client.js";
 import { workflows } from "../db/schema.js";
 
+const WORKFLOW_STATUSES = ["draft", "active", "paused"] as const;
+
 export class WorkflowsService {
   constructor(private readonly db: Db) {}
 
-  async create(input: { name: string; description?: string; graph: unknown }) {
+  async create(input: { name?: string; description?: string; graph: unknown }) {
+    const name = this.parseName(input.name);
     const graph = this.parseGraph(input.graph);
     const [row] = await this.db
       .insert(workflows)
-      .values({ name: input.name, description: input.description ?? "", graph })
+      .values({ name, description: input.description ?? "", graph })
       .returning();
     return row;
   }
@@ -37,9 +40,9 @@ export class WorkflowsService {
   ) {
     await this.get(id);
     const values: Record<string, unknown> = { updatedAt: new Date() };
-    if (patch.name !== undefined) values.name = patch.name;
+    if (patch.name !== undefined) values.name = this.parseName(patch.name);
     if (patch.description !== undefined) values.description = patch.description;
-    if (patch.status !== undefined) values.status = patch.status;
+    if (patch.status !== undefined) values.status = this.parseStatus(patch.status);
     if (patch.graph !== undefined) values.graph = this.parseGraph(patch.graph);
     const [row] = await this.db
       .update(workflows)
@@ -52,6 +55,28 @@ export class WorkflowsService {
   async delete(id: string) {
     await this.get(id);
     await this.db.delete(workflows).where(eq(workflows.id, id));
+  }
+
+  private parseName(name: unknown): string {
+    if (typeof name !== "string" || name.trim() === "") {
+      throw new AppError({
+        code: "INVALID_WORKFLOW",
+        friendlyMessage: "This automation needs a name.",
+        suggestedFix: "Give it a short name that says what it does.",
+      });
+    }
+    return name.trim();
+  }
+
+  private parseStatus(status: string): string {
+    if (!WORKFLOW_STATUSES.includes(status as (typeof WORKFLOW_STATUSES)[number])) {
+      throw new AppError({
+        code: "INVALID_WORKFLOW",
+        friendlyMessage: `"${status}" isn't a valid automation status.`,
+        suggestedFix: "Use draft, active, or paused.",
+      });
+    }
+    return status;
   }
 
   private parseGraph(graph: unknown): WorkflowGraph {

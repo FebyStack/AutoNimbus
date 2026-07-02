@@ -11,6 +11,7 @@ export interface AppDeps {
 const ERROR_STATUS: Record<string, number> = {
   WORKFLOW_NOT_FOUND: 404,
   INVALID_GRAPH: 400,
+  INVALID_WORKFLOW: 400,
 };
 
 export function buildApp(deps: AppDeps = {}): FastifyInstance {

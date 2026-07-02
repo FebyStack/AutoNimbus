@@ -25,7 +25,7 @@ export function redactSecrets<T>(value: T, knownSecrets: string[] = []): T {
       if (keyHint && SECRET_KEY_PATTERN.test(keyHint)) return MASK;
       return redactString(node, knownSecrets);
     }
-    if (Array.isArray(node)) return node.map((item) => walk(item));
+    if (Array.isArray(node)) return node.map((item) => walk(item, keyHint));
     if (node !== null && typeof node === "object") {
       return Object.fromEntries(
         Object.entries(node as Record<string, unknown>).map(([k, v]) => [
