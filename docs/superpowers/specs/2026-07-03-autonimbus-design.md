@@ -216,6 +216,44 @@ The editor should feel like Figma, not an admin dashboard:
 
 Implementation: React Flow with a custom theme, custom edges/handles, and interaction polish as an explicit workstream with its own tasks in the implementation plan.
 
-## 12. Out of scope for v1
+## 12. Security & privacy guidelines
+
+**Nothing is exposed off the machine.**
+- The Fastify server and WebSocket bind to `127.0.0.1` only — never `0.0.0.0`. The API is unreachable from the network, full stop. CORS is locked to `http://localhost:4680`.
+- Incoming webhook URLs use long random path tokens plus an optional shared secret, and exist only on localhost until the user explicitly enables a tunnel (post-v1 feature, off by default).
+
+**No secrets in code, logs, or model calls.**
+- Credentials live only in the vault: AES-256-GCM encrypted in Postgres, encryption key stored in the macOS Keychain — never in source, `.env` holds only the DB connection string, and `.env` is gitignored (`.env.example` ships with placeholders only).
+- Workflow graphs, run snapshots, logs, and chat history reference credentials **by id/label only**. A redaction layer scrubs known credential values and secret-shaped strings (tokens, keys, bearer headers) from `run_steps` snapshots and log lines before they are written.
+- Decrypted secrets exist only in memory inside the node runtime at execution time, injected per step and never returned in node output.
+
+**Untrusted code and inputs are contained.**
+- Agent- or user-created nodes are installed only after the user sees the generated code (a diff-style preview with a plain-English summary of what it accesses) and approves. They run under the same runtime as built-ins: per-step timeout, no ambient shell/fs access — capabilities must be declared in the manifest and are permission-gated per workflow like everything else.
+- File and shell nodes stay deny-by-default behind the per-workflow permission prompts and folder allowlists from section 6.
+- Dependencies are locked (`pnpm-lock.yaml`) and audited (`pnpm audit`) as a CI step.
+
+## 13. Rate limiting & resource caps
+
+Runaway automations are a bigger real-world risk than attackers for a local tool, so the engine enforces caps everywhere:
+
+- **Engine:** max concurrent runs (default 3), max steps per run (default 200), per-step timeout (default 60s), and loop/Repeat iteration caps (default 100) — all overridable per workflow, never removable entirely.
+- **HTTP/API nodes:** a per-service rate limiter (default 1 req/sec per credential) with automatic exponential backoff on `429`/`5xx`, so an automation can't burn through a third-party API quota or get the user's key banned.
+- **Browser nodes:** one page action at a time per site with a minimum delay between actions — polite scraping by default.
+- **Webhook endpoints:** rate-limited per token to absorb accidental floods.
+- **Schedules:** minimum interval of 1 minute; overlapping runs of the same workflow are skipped, not stacked.
+
+## 14. AI usage scope — what Nimbus may and may not do
+
+**Nimbus may:** read workflow graphs, node manifests, run history, and *redacted* step snapshots; read docs URLs the user provides; create and edit workflows and node types **only through the same server services as the REST API**; propose fixes; launch the setup wizard.
+
+**Nimbus may not:**
+- Read the vault, decrypted credentials, or unredacted snapshots — the agent's tools simply have no path to them.
+- Apply destructive or outward-facing changes without a preview: deleting a workflow, installing a generated node, or any step that sends data off the machine requires explicit user approval in the UI first.
+- Run shell commands or touch files outside the permission-gated node runtime.
+- Add capabilities to a node silently — a generated node requesting shell or file access is called out in the approval preview.
+
+**Data minimization to the model:** payloads sent to Claude are redacted samples truncated to what the task needs, never full run dumps. Privacy-sensitive runtime steps can be pinned to local Ollama so their data never leaves the machine. **Usage caps:** agent turns per request are bounded, and a configurable daily Claude budget (in the settings table) stops surprise subscription drain; when a cap is hit, Nimbus says so instead of degrading silently. **Audit trail:** every agent action is recorded in `chat_messages` and the standard structured logs with correlation IDs, so anything Nimbus did is reconstructable exactly like a human edit.
+
+## 15. Out of scope for v1
 
 Multi-user/auth, cloud sync, node marketplace, mobile, queue/scale mode, Windows/Linux polish (project structure must not block adding these later).
