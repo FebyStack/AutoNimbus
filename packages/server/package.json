@@ -5,11 +5,22 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@autonimbus/engine": "workspace:*",
     "@autonimbus/nodes": "workspace:*",
-    "@autonimbus/shared": "workspace:*"
+    "@autonimbus/shared": "workspace:*",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.9.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.22.4"
   }
 }
