@@ -8,7 +8,7 @@ node_modules/
 data/
 
 # Env & secrets
-.env
+**/.env
 .env.local
 
 # Build output

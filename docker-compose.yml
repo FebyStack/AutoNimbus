@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16
+    container_name: autonimbus-db
+    environment:
+      POSTGRES_USER: autonimbus
+      POSTGRES_PASSWORD: autonimbus
+      POSTGRES_DB: autonimbus
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
