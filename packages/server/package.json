@@ -1,0 +1,15 @@
+{
+  "name": "@autonimbus/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@autonimbus/engine": "workspace:*",
+    "@autonimbus/nodes": "workspace:*",
+    "@autonimbus/shared": "workspace:*"
+  }
+}
